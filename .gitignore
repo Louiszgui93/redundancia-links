@@ -1,0 +1,26 @@
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+
+# Python / Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Compilação
+build/
+dist/
+*.spec
+
+# Logs e arquivos de execução local
+*.log
+controle_link.log
+config.json
+
+# IDEs e Sistema
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

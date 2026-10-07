@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redundância Central - Dashboard de Lojas</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- --- CABEÇALHO --- -->
+        <header class="main-header">
+            <div class="logo-area">
+                <span class="logo-icon">📡</span>
+                <div>
+                    <h1>Redundância Central</h1>
+                    <p>Painel de Controle e Monitoramento de Links (Tempo Real)</p>
+                </div>
+            </div>
+            <div class="stats-area">
+                <div class="stat-badge">
+                    <span class="stat-num" id="stat-total">{{ stores|length }}</span>
+                    <span class="stat-label">Lojas</span>
+                </div>
+                <div class="stat-badge success">
+                    <span class="stat-num" id="stat-online">
+                        {{ stores | selectattr('active_link', 'ne', 'desconectado') | list | length }}
+                    </span>
+                    <span class="stat-label">Ativas</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- --- GRID DE LOJAS --- -->
+        <main class="dashboard-grid">
+            {% for store in stores %}
+            <div class="store-card {% if store.active_link == 'desconectado' %}disconnected{% elif store.online == 0 %}no-internet{% endif %}" id="card-{{ store.id }}">
+                <div class="card-header">
+                    <div class="store-info">
+                        <h3>{{ store.name }}</h3>
+                        <span class="store-id">{{ store.id }}</span>
+                    </div>
+                    <div class="status-indicator">
+                        {% if store.active_link == 'desconectado' %}
+                            <span class="status-dot gray animate-pulse"></span>
+                            <span class="status-text">Sem Sinal</span>
+                        {% elif store.online == 0 %}
+                            <span class="status-dot red animate-pulse"></span>
+                            <span class="status-text">Sem Internet</span>
+                        {% else %}
+                            <span class="status-dot green animate-pulse"></span>
+                            <span class="status-text">Online</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    <div class="info-row">
+                        <span class="info-label">Link Ativo:</span>
+                        <span class="info-val link-badge {% if store.active_link == 'link1' %}link-primary{% elif store.active_link == 'link2' %}link-backup{% endif %}">
+                            {% if store.active_link == 'link1' %}
+                                {{ store.link1.name }} (L1)
+                            {% elif store.active_link == 'link2' %}
+                                {{ store.link2.name }} (L2)
+                            {% else %}
+                                Desconectado
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Latência:</span>
+                        <span class="info-val latency-text">
+                            {% if store.active_link != 'desconectado' and store.online == 1 %}
+                                ⚡ {{ "%.1f"|format(store.latency) }} ms
+                            {% else %}
+                                -- ms
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Interface:</span>
+                        <span class="info-val iface-text">{{ store.interface or 'Auto' }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Modo:</span>
+                        <span class="info-val mode-text">{{ store.mode | upper }}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Último Sinal:</span>
+                        <span class="info-val time-ago" data-time="{{ store.last_heartbeat }}">
+                            {% if store.last_heartbeat > 0 %}
+                                Calculando...
+                            {% else %}
+                                Nunca
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- --- CONTROLES DE VIRADA --- -->
+                <div class="card-actions">
+                    <button class="btn btn-primary-link" onclick="sendControl('{{ store.id }}', 'FORCE_SWITCH_PRIMARY')" {% if store.active_link == 'desconectado' %}disabled{% endif %}>
+                        Forçar L1
+                    </button>
+                    <button class="btn btn-backup-link" onclick="sendControl('{{ store.id }}', 'FORCE_SWITCH_BACKUP')" {% if store.active_link == 'desconectado' %}disabled{% endif %}>
+                        Forçar L2
+                    </button>
+                    <button class="btn btn-edit-config" onclick="openConfigModal('{{ store.id }}')">
+                        ⚙️ Configurar
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Guardamos os dados completos da loja em formato JSON na página para carregar no modal facilmente -->
+            <script id="data-{{ store.id }}" type="application/json">
+                {{ store | tojson }}
+            </script>
+            {% endfor %}
+        </main>
+    </div>
+
+    <!-- --- MODAL DE CONFIGURAÇÃO DE LOJA --- -->
+    <div id="config-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Configuração de Rede: <span id="modal-store-name">Nome Loja</span></h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <form id="config-form" onsubmit="saveConfig(event)">
+                <input type="hidden" id="form-store-id">
+                
+                <div class="tabs-container">
+                    <div class="tab-buttons">
+                        <button type="button" class="tab-btn active" onclick="switchTab('tab-general')">Parâmetros do Monitor</button>
+                        <button type="button" class="tab-btn" onclick="switchTab('tab-link1')">Link 1 (Principal)</button>
+                        <button type="button" class="tab-btn" onclick="switchTab('tab-link2')">Link 2 (Backup)</button>
+                    </div>
+
+                    <!-- TAB GERENAL -->
+                    <div id="tab-general" class="tab-pane active">
+                        <div class="form-group">
+                            <label for="form-name">Nome da Loja:</label>
+                            <input type="text" id="form-name" required>
+                        </div>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label for="form-interface">Interface de Rede:</label>
+                                <input type="text" id="form-interface" required placeholder="Ex: Ethernet">
+                            </div>
+                            <div class="form-group">
+                                <label for="form-mode">Modo de Operação:</label>
+                                <select id="form-mode" onchange="toggleFormIPFields()">
+                                    <option value="routes">Rotas Corporativas</option>
+                                    <option value="gateway">Apenas Gateway</option>
+                                    <option value="full_ip">IP Completo</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-grid-3">
+                            <div class="form-group">
+                                <label for="form-interval">Intervalo de Teste (s):</label>
+                                <input type="number" id="form-interval" min="5" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="form-timeout">Timeout do Ping (ms):</label>
+                                <input type="number" id="form-timeout" min="100" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="form-fail-limit">Limite de Falhas:</label>
+                                <input type="number" id="form-fail-limit" min="1" required>
+                            </div>
+                        </div>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label for="form-fallback-interval">Intervalo de Fallback (s):</label>
+                                <input type="number" id="form-fallback-interval" min="10" required>
+                            </div>
+                            <div class="form-group checkbox-group">
+                                <input type="checkbox" id="form-auto-fallback">
+                                <label for="form-auto-fallback">Retorno Automático para Link 1</label>
+                            </div>
+                        </div>
+                        <div class="form-group" id="group-static-subnets">
+                            <label for="form-subnets">Sub-redes para Gerenciamento de Rotas (Uma por linha):</label>
+                            <textarea id="form-subnets" rows="3" placeholder="Ex: 172.20.153.0/24"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- TAB LINK 1 -->
+                    <div id="tab-link1" class="tab-pane">
+                        <div class="form-group">
+                            <label for="form-l1-name">Nome do Link 1:</label>
+                            <input type="text" id="form-l1-name" required placeholder="Ex: Embratel">
+                        </div>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label for="form-l1-gateway">Gateway:</label>
+                                <input type="text" id="form-l1-gateway" required placeholder="Ex: 192.168.4.1">
+                            </div>
+                            <div class="form-group l1-ip-field">
+                                <label for="form-l1-ip">IP Estático:</label>
+                                <input type="text" id="form-l1-ip" placeholder="Ex: 192.168.4.100">
+                            </div>
+                        </div>
+                        <div class="form-grid-3 l1-ip-field">
+                            <div class="form-group">
+                                <label for="form-l1-mask">Máscara Sub-rede:</label>
+                                <input type="text" id="form-l1-mask" placeholder="Ex: 255.255.255.0">
+                            </div>
+                            <div class="form-group">
+                                <label for="form-l1-dns1">DNS 1:</label>
+                                <input type="text" id="form-l1-dns1" placeholder="Ex: 8.8.8.8">
+                            </div>
+                            <div class="form-group">
+                                <label for="form-l1-dns2">DNS 2:</label>
+                                <input type="text" id="form-l1-dns2" placeholder="Ex: 8.8.4.4">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="form-l1-test-ips">IPs para verificação de queda (Um por linha):</label>
+                            <textarea id="form-l1-test-ips" rows="3" required placeholder="Ex: 8.8.8.8"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- TAB LINK 2 -->
+                    <div id="tab-link2" class="tab-pane">
+                        <div class="form-group">
+                            <label for="form-l2-name">Nome do Link 2:</label>
+                            <input type="text" id="form-l2-name" required placeholder="Ex: Oi 3G">
+                        </div>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label for="form-l2-gateway">Gateway:</label>
+                                <input type="text" id="form-l2-gateway" required placeholder="Ex: 192.168.5.76">
+                            </div>
+                            <div class="form-group l2-ip-field">
+                                <label for="form-l2-ip">IP Estático:</label>
+                                <input type="text" id="form-l2-ip" placeholder="Ex: 192.168.5.100">
+                            </div>
+                        </div>
+                        <div class="form-grid-3 l2-ip-field">
+                            <div class="form-group">
+                                <label for="form-l2-mask">Máscara Sub-rede:</label>
+                                <input type="text" id="form-l2-mask" placeholder="Ex: 255.255.255.0">
+                            </div>
+                            <div class="form-group">
+                                <label for="form-l2-dns1">DNS 1:</label>
+                                <input type="text" id="form-l2-dns1" placeholder="Ex: 1.1.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="form-l2-dns2">DNS 2:</label>
+                                <input type="text" id="form-l2-dns2" placeholder="Ex: 1.0.0.1">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="form-l2-test-ips">IPs para verificação de queda (Um por linha):</label>
+                            <textarea id="form-l2-test-ips" rows="3" required placeholder="Ex: 1.1.1.1"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-delete" onclick="deleteStoreClick()">Remover Loja</button>
+                    <div style="flex: 1;"></div>
+                    <button type="button" class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
+                    <button type="submit" class="btn btn-save">Salvar Configuração</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- --- JAVASCRIPT --- -->
+    <script>
+        // Conexão WebSocket nativa baseada na URL atual da página
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${location.host}/ws`;
+        let socket;
+
+        function connectWebSocket() {
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = function() {
+                console.log("Conectado ao barramento WebSocket Central!");
+                // Registra esta aba do navegador para escutar atualizações de status
+                socket.send(JSON.stringify({ type: "register_browser" }));
+            };
+
+            socket.onclose = function() {
+                console.log("Conexão WebSocket perdida. Reconectando em 5 segundos...");
+                setTimeout(connectWebSocket, 5000);
+            };
+
+            socket.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                if (message.type === 'store_update') {
+                    const store = message.store;
+                    console.log("Atualização de loja recebida via WebSocket:", store);
+                    
+                    // 1. Atualiza o JSON do script tag correspondente
+                    const dataScript = document.getElementById(`data-${store.id}`);
+                    if (dataScript) {
+                        dataScript.textContent = JSON.stringify(store);
+                    }
+                    
+                    // 2. Busca o card na tela
+                    let card = document.getElementById(`card-${store.id}`);
+                    if (!card) {
+                        // Se for uma nova loja que acabou de ser registrada, recarrega para criar o card
+                        location.reload();
+                        return;
+                    }
+                    
+                    // 3. Atualiza o status visual do card
+                    card.className = 'store-card';
+                    const dot = card.querySelector('.status-dot');
+                    const statusText = card.querySelector('.status-text');
+                    const actionButtons = card.querySelectorAll('.card-actions button:not(.btn-edit-config)');
+                    
+                    if (store.active_link === 'desconectado') {
+                        card.classList.add('disconnected');
+                        dot.className = 'status-dot gray animate-pulse';
+                        statusText.textContent = 'Sem Sinal';
+                        actionButtons.forEach(btn => btn.disabled = true);
+                    } else if (store.online === 0) {
+                        card.classList.add('no-internet');
+                        dot.className = 'status-dot red animate-pulse';
+                        statusText.textContent = 'Sem Internet';
+                        actionButtons.forEach(btn => btn.disabled = false);
+                    } else {
+                        dot.className = 'status-dot green animate-pulse';
+                        statusText.textContent = 'Online';
+                        actionButtons.forEach(btn => btn.disabled = false);
+                    }
+                    
+                    // 4. Atualiza o Link Ativo
+                    const linkVal = card.querySelector('.info-val.link-badge');
+                    linkVal.className = 'info-val link-badge';
+                    if (store.active_link === 'link1') {
+                        linkVal.classList.add('link-primary');
+                        linkVal.textContent = `${store.link1.name} (L1)`;
+                    } else if (store.active_link === 'link2') {
+                        linkVal.classList.add('link-backup');
+                        linkVal.textContent = `${store.link2.name} (L2)`;
+                    } else {
+                        linkVal.textContent = 'Desconectado';
+                    }
+                    
+                    // 5. Atualiza a latência (Ping)
+                    const latencyVal = card.querySelector('.latency-text');
+                    if (latencyVal) {
+                        if (store.active_link !== 'desconectado' && store.online === 1) {
+                            latencyVal.textContent = `⚡ ${parseFloat(store.latency).toFixed(1)} ms`;
+                        } else {
+                            latencyVal.textContent = '-- ms';
+                        }
+                    }
+                    
+                    // 6. Atualiza a interface de rede
+                    const ifaceVal = card.querySelector('.iface-text');
+                    if (ifaceVal && store.interface) {
+                        ifaceVal.textContent = store.interface;
+                    }
+                    
+                    // 7. Atualiza o modo de operação
+                    const modeVal = card.querySelector('.mode-text');
+                    if (modeVal && store.mode) {
+                        modeVal.textContent = store.mode.toUpperCase();
+                    }
+                    
+                    // 7. Atualiza o timestamp do último sinal
+                    const timeVal = card.querySelector('.time-ago');
+                    timeVal.setAttribute('data-time', store.last_heartbeat);
+                    
+                    updateTimeAgos();
+                    recalculateOnlineStats();
+                }
+            };
+        }
+
+        // Inicia conexão WebSocket
+        connectWebSocket();
+
+        // Força virada de link emitindo evento WebSocket imediato
+        function sendControl(storeId, command) {
+            console.log(`Enviando comando via WebSocket para ${storeId}: ${command}`);
+            socket.send(JSON.stringify({
+                type: "send_command",
+                store_id: storeId,
+                command: command
+            }));
+            
+            // Efeito visual temporário de loading
+            const card = document.getElementById(`card-${storeId}`);
+            if (card) {
+                const dot = card.querySelector('.status-dot');
+                const statusText = card.querySelector('.status-text');
+                dot.className = 'status-dot yellow animate-pulse';
+                statusText.textContent = 'Aplicando...';
+            }
+        }
+
+        // Recalcula o cabeçalho de estatísticas sem reload
+        function recalculateOnlineStats() {
+            const cards = document.querySelectorAll('.store-card');
+            const total = cards.length;
+            let onlineCount = 0;
+            
+            cards.forEach(card => {
+                if (!card.classList.contains('disconnected')) {
+                    onlineCount++;
+                }
+            });
+            
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-online').textContent = onlineCount;
+        }
+
+        // Atualiza o tempo relativo (Ex: "Há 5 segundos")
+        function updateTimeAgos() {
+            const timeElements = document.querySelectorAll('.time-ago');
+            const now = Math.floor(Date.now() / 1000);
+
+            timeElements.forEach(el => {
+                const timestamp = parseFloat(el.getAttribute('data-time'));
+                if (!timestamp || timestamp === 0) {
+                    el.textContent = "Nunca";
+                    return;
+                }
+                const diff = now - timestamp;
+
+                if (diff < 5) {
+                    el.textContent = "Agora mesmo";
+                } else if (diff < 60) {
+                    el.textContent = `Há ${Math.floor(diff)} segundos`;
+                } else if (diff < 3600) {
+                    el.textContent = `Há ${Math.floor(diff / 60)} min`;
+                } else {
+                    el.textContent = `Há ${Math.floor(diff / 3600)} horas`;
+                }
+            });
+        }
+        
+        setInterval(updateTimeAgos, 1000);
+        window.onload = updateTimeAgos;
+
+        // --- ABA SELECTION ---
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+
+            const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.getAttribute('onclick').includes(tabId));
+            if (activeBtn) activeBtn.classList.add('active');
+            
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        // Abre modal e preenche formulário
+        function openConfigModal(storeId) {
+            const dataElement = document.getElementById(`data-${storeId}`);
+            if (!dataElement) return;
+
+            const store = JSON.parse(dataElement.textContent);
+            
+            document.getElementById('modal-store-name').textContent = store.name;
+            document.getElementById('form-store-id').value = store.id;
+            document.getElementById('form-name').value = store.name;
+            document.getElementById('form-interface').value = store.interface;
+            document.getElementById('form-mode').value = store.mode;
+            document.getElementById('form-interval').value = store.ping_interval;
+            document.getElementById('form-timeout').value = store.ping_timeout;
+            document.getElementById('form-fail-limit').value = store.fail_limit;
+            document.getElementById('form-fallback-interval').value = store.fallback_interval;
+            document.getElementById('form-auto-fallback').checked = !!store.auto_fallback;
+            document.getElementById('form-subnets').value = store.static_subnets || '';
+
+            // Link 1
+            const l1 = store.link1 || {};
+            document.getElementById('form-l1-name').value = l1.name || '';
+            document.getElementById('form-l1-gateway').value = l1.gateway || '';
+            document.getElementById('form-l1-ip').value = l1.ip || '';
+            document.getElementById('form-l1-mask').value = l1.mask || '';
+            document.getElementById('form-l1-dns1').value = l1.dns1 || '';
+            document.getElementById('form-l1-dns2').value = l1.dns2 || '';
+            document.getElementById('form-l1-test-ips').value = l1.test_ips || '';
+
+            // Link 2
+            const l2 = store.link2 || {};
+            document.getElementById('form-l2-name').value = l2.name || '';
+            document.getElementById('form-l2-gateway').value = l2.gateway || '';
+            document.getElementById('form-l2-ip').value = l2.ip || '';
+            document.getElementById('form-l2-mask').value = l2.mask || '';
+            document.getElementById('form-l2-dns1').value = l2.dns1 || '';
+            document.getElementById('form-l2-dns2').value = l2.dns2 || '';
+            document.getElementById('form-l2-test-ips').value = l2.test_ips || '';
+
+            switchTab('tab-general');
+            toggleFormIPFields();
+            document.getElementById('config-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('config-modal').style.display = 'none';
+        }
+
+        // Mostra/Oculta IPs de teste baseado no modo
+        function toggleFormIPFields() {
+            const mode = document.getElementById('form-mode').value;
+            const subnetsGroup = document.getElementById('group-static-subnets');
+            
+            const l1Fields = document.querySelectorAll('.l1-ip-field');
+            const l2Fields = document.querySelectorAll('.l2-ip-field');
+
+            if (mode === 'full_ip') {
+                l1Fields.forEach(f => f.style.display = 'block');
+                l2Fields.forEach(f => f.style.display = 'block');
+            } else {
+                l1Fields.forEach(f => f.style.display = 'none');
+                l2Fields.forEach(f => f.style.display = 'none');
+            }
+
+            if (mode === 'routes') {
+                subnetsGroup.style.display = 'block';
+            } else {
+                subnetsGroup.style.display = 'none';
+            }
+        }
+
+        // Salva configurações da loja no servidor
+        function saveConfig(event) {
+            event.preventDefault();
+            const storeId = document.getElementById('form-store-id').value;
+
+            const config = {
+                store_id: storeId,
+                name: document.getElementById('form-name').value,
+                interface: document.getElementById('form-interface').value,
+                mode: document.getElementById('form-mode').value,
+                ping_interval: parseInt(document.getElementById('form-interval').value),
+                ping_timeout: parseInt(document.getElementById('form-timeout').value),
+                fail_limit: parseInt(document.getElementById('form-fail-limit').value),
+                fallback_interval: parseInt(document.getElementById('form-fallback-interval').value),
+                auto_fallback: document.getElementById('form-auto-fallback').checked,
+                static_subnets: document.getElementById('form-subnets').value,
+                link1: {
+                    name: document.getElementById('form-l1-name').value,
+                    gateway: document.getElementById('form-l1-gateway').value,
+                    ip: document.getElementById('form-l1-ip').value,
+                    mask: document.getElementById('form-l1-mask').value,
+                    dns1: document.getElementById('form-l1-dns1').value,
+                    dns2: document.getElementById('form-l1-dns2').value,
+                    test_ips: document.getElementById('form-l1-test-ips').value
+                },
+                link2: {
+                    name: document.getElementById('form-l2-name').value,
+                    gateway: document.getElementById('form-l2-gateway').value,
+                    ip: document.getElementById('form-l2-ip').value,
+                    mask: document.getElementById('form-l2-mask').value,
+                    dns1: document.getElementById('form-l2-dns1').value,
+                    dns2: document.getElementById('form-l2-dns2').value,
+                    test_ips: document.getElementById('form-l2-test-ips').value
+                }
+            };
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(data.message);
+                    closeModal();
+                    // Atualiza a visualização local
+                    location.reload();
+                } else {
+                    alert("Erro: " + data.error);
+                }
+            })
+            .catch(err => alert("Erro ao conectar no servidor: " + err));
+        }
+
+        // Remover loja do painel
+        function deleteStoreClick() {
+            const storeId = document.getElementById('form-store-id').value;
+            if (confirm(`Tem certeza que deseja remover a loja ${storeId} do painel?`)) {
+                fetch('/api/store/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ store_id: storeId })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(data.message);
+                        closeModal();
+                        location.reload();
+                    } else {
+                        alert("Erro: " + data.error);
+                    }
+                })
+                .catch(err => alert("Erro ao excluir: " + err));
+            }
+        }
+    </script>
+</body>
+</html>
