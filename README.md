@@ -99,5 +99,5 @@ Os binários compilados serão gerados na pasta `dist/`.
 ## 👤 Autor
 
 Desenvolvido por **Luiz Guilherme de Almeida**  
-- LinkedIn: [linkedin.com/in/seu-perfil](https://linkedin.com)  
-- GitHub: [github.com/seu-usuario](https://github.com)  
+- LinkedIn: (www.linkedin.com/in/luiz-guilherme-6bbb8a194)  
+- GitHub: (github.com/Louiszgui93)  
